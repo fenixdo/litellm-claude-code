@@ -16,6 +16,35 @@ DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 ROLE_PREFIXES = {"user": "Human", "assistant": "Assistant"}
 
 
+def _content_to_text(content) -> str:
+    """Flatten message content to plain text.
+
+    Callers may send `content` as a plain string, or — as Claude Code and the
+    Anthropic Messages API do — as a list of content blocks like
+    [{"type": "text", "text": "..."}]. Non-text blocks (images, tool_use, etc.)
+    are skipped.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                text = block.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+            else:  # SDK objects exposing a .text attribute
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    parts.append(text)
+        return "\n".join(parts)
+    return str(content)
+
+
 class ClaudeAgentSDKProvider(CustomLLM):
     """LiteLLM provider that wraps the Claude Agent SDK as a plain model call."""
 
@@ -33,7 +62,7 @@ class ClaudeAgentSDKProvider(CustomLLM):
         turn_parts = []
         for msg in messages:
             role = msg.get("role", "user")
-            content = msg.get("content", "")
+            content = _content_to_text(msg.get("content", ""))
             if role == "system":
                 system_parts.append(content)
             else:
