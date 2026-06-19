@@ -1,5 +1,6 @@
 import asyncio
 import concurrent.futures
+import os
 import time
 import uuid
 from typing import AsyncIterator, Dict, Iterator, List, Tuple
@@ -43,6 +44,44 @@ def _content_to_text(content) -> str:
                     parts.append(text)
         return "\n".join(parts)
     return str(content)
+
+
+# Tools the wrapped agent may use when CLAUDE_AGENT_ENABLE_TOOLS is set. Kept OFF
+# by default so the provider stays a safe text-only model (the historical
+# behaviour); enable it to give Claude Code a real read/run/edit coding flow.
+DEFAULT_AGENT_TOOLS = [
+    "Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep",
+    "TodoWrite", "WebFetch", "WebSearch",
+]
+
+
+def _tools_enabled() -> bool:
+    return os.environ.get("CLAUDE_AGENT_ENABLE_TOOLS", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _build_agent_options(model_name: str, system_prompt: str) -> ClaudeAgentOptions:
+    """Build SDK options. Default = no tools, single turn (safe text model).
+    With CLAUDE_AGENT_ENABLE_TOOLS set, the agent gets a real tool set, agentic
+    looping, and a working directory so it can read/run/edit code."""
+    if not _tools_enabled():
+        return ClaudeAgentOptions(
+            model=model_name,
+            system_prompt=system_prompt,
+            allowed_tools=[],
+            max_turns=1,
+        )
+    tools_env = os.environ.get("CLAUDE_AGENT_ALLOWED_TOOLS", "")
+    allowed = [t.strip() for t in tools_env.split(",") if t.strip()] or DEFAULT_AGENT_TOOLS
+    return ClaudeAgentOptions(
+        model=model_name,
+        system_prompt=system_prompt,
+        allowed_tools=allowed,
+        permission_mode=os.environ.get("CLAUDE_AGENT_PERMISSION_MODE", "bypassPermissions"),
+        max_turns=int(os.environ.get("CLAUDE_AGENT_MAX_TURNS", "30")),
+        cwd=os.environ.get("CLAUDE_AGENT_CWD", "/workspace"),
+    )
 
 
 class ClaudeAgentSDKProvider(CustomLLM):
@@ -131,12 +170,7 @@ class ClaudeAgentSDKProvider(CustomLLM):
     async def acompletion(self, model: str, messages: List[Dict], **kwargs) -> ModelResponse:
         """Async completion using Claude Agent SDK."""
         system_prompt, prompt = self._split_messages(messages)
-        options = ClaudeAgentOptions(
-            model=self._extract_model(model),
-            system_prompt=system_prompt,
-            allowed_tools=[],
-            max_turns=1,
-        )
+        options = _build_agent_options(self._extract_model(model), system_prompt)
 
         content = ""
         prompt_tokens = 0
@@ -166,12 +200,7 @@ class ClaudeAgentSDKProvider(CustomLLM):
     async def astreaming(self, model: str, messages: List[Dict], **kwargs) -> AsyncIterator[GenericStreamingChunk]:
         """Async streaming using Claude Agent SDK."""
         system_prompt, prompt = self._split_messages(messages)
-        options = ClaudeAgentOptions(
-            model=self._extract_model(model),
-            system_prompt=system_prompt,
-            allowed_tools=[],
-            max_turns=1,
-        )
+        options = _build_agent_options(self._extract_model(model), system_prompt)
 
         total_chars = 0
         prompt_tokens = 0
